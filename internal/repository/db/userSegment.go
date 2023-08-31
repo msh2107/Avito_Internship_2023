@@ -38,7 +38,7 @@ func (r *UserSegmentRepository) GetActiveSegmentsByUser(userID int) ([]models.Se
 	}
 
 	if err = rows.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("UserSegmentRepository.GetActiveSegmentsByUser - rows.err: %v", err)
 	}
 	if len(segments) == 0 {
 		return nil, ErrNotFound
@@ -54,6 +54,32 @@ func (r *UserSegmentRepository) ChangeActiveSegments(userID int, slugsToAdd, slu
 	defer func() {
 		_ = tx.Rollback(context.Background())
 	}()
+	checkQ := `SELECT slug FROM segments`
+	rows, err := tx.Query(context.Background(), checkQ)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("UserSegmentRepository.ChangeActiveSegments - tx.Query: %v", err)
+	}
+	slugs := make(map[string]struct{})
+	for rows.Next() {
+		var slug string
+		err = rows.Scan(&slug)
+		if err != nil {
+			return fmt.Errorf("UserSegmentRepository.ChangeActiveSegments - rows.Scan: %v", err)
+		}
+		slugs[slug] = struct{}{}
+	}
+	if err = rows.Err(); err != nil {
+		return fmt.Errorf("UserSegmentRepository.ChangeActiveSegments - rows.err: %v", err)
+	}
+
+	for _, slug := range slugsToAdd {
+		if _, ok := slugs[slug]; !ok {
+			return fmt.Errorf("%s does not exist", slug)
+		}
+	}
 
 	q := `INSERT  INTO users (id) VALUES ($1) ON CONFLICT DO NOTHING`
 	_, err = tx.Exec(context.Background(), q, userID)
